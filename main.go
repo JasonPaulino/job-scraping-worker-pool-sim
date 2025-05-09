@@ -2,9 +2,9 @@ package main
 
 import (
 	"github.com/google/uuid"
+	"time"
 
 	"fmt"
-	"log"
 	"net/http"
 )
 
@@ -20,21 +20,49 @@ type Result struct {
 }
 
 func worker(id string, jobs <-chan Job, results chan<- Result) {
-	_ = id
+	_ = id // id param isn't used so we satisfy compiler
+
+	var (
+		finalResp   *http.Response
+		finalJobErr error
+	)
 
 	for job := range jobs {
-		resp, err := http.Get(job.URL)
+		maxRetries := 3
 
-		if err != nil {
-			results <- Result{JobID: job.ID, StatusCode: 0, Err: err}
-			continue
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			resp, err := http.Get(job.URL)
+
+			if err == nil { // Response was successful
+				finalResp = resp
+				break
+			}
+
+			/*
+				NOTE: We could change the Result struct Err field
+				To a list of error so we capture every retry
+			*/
+			finalJobErr = err // Resetting to latest error
+
+			fmt.Printf("[Worker %s] Attempt %d failed for job %s: %v\n", id, attempt, job.ID, err)
+			time.Sleep(500 * time.Millisecond) // backoff before retry
 		}
 
-		if resourceErr := resp.Body.Close(); resourceErr != nil {
-			log.Fatal(resourceErr)
-		}
+		if finalResp != nil {
+			defer finalResp.Body.Close()
 
-		results <- Result{JobID: job.ID, StatusCode: resp.StatusCode, Err: nil}
+			results <- Result{
+				JobID:      job.ID,
+				StatusCode: finalResp.StatusCode,
+				Err:        nil,
+			}
+		} else {
+			results <- Result{
+				JobID:      job.ID,
+				StatusCode: 0,
+				Err:        finalJobErr,
+			}
+		}
 	}
 }
 
