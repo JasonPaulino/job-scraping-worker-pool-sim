@@ -1,23 +1,25 @@
 package main
 
 import (
+	"github.com/google/uuid"
+
 	"fmt"
 	"log"
 	"net/http"
 )
 
 type Job struct {
-	ID  int
+	ID  string
 	URL string
 }
 
 type Result struct {
-	JobID      int
+	JobID      string
 	StatusCode int
 	Err        error
 }
 
-func worker(id int, jobs <-chan Job, results chan<- Result) {
+func worker(id string, jobs <-chan Job, results chan<- Result) {
 	_ = id
 
 	for job := range jobs {
@@ -51,12 +53,16 @@ func main() {
 
 	// Start workers
 	for w := 1; w <= numOfWorkers; w++ {
-		go worker(w, jobs, results)
+		workerUUID := uuid.New().String()
+
+		go worker(workerUUID, jobs, results)
 	}
 
 	// Send jobs to the job queue
-	for i, url := range urls {
-		jobs <- Job{ID: i + 1, URL: url}
+	for _, url := range urls {
+		jobUUID := uuid.New().String()
+
+		jobs <- Job{ID: jobUUID, URL: url}
 	}
 
 	// Collect the results
@@ -64,9 +70,9 @@ func main() {
 		result := <-results
 
 		if result.Err != nil {
-			fmt.Printf("Job #%d FAILED: %v\n", result.JobID, result.Err)
+			fmt.Printf("Job %s FAILED: %v\n", result.JobID, result.Err)
 		} else {
-			fmt.Printf("Job #%d SUCCESS: status code %d\n", result.JobID, result.StatusCode)
+			fmt.Printf("Job %s SUCCESS: status code %d\n", result.JobID, result.StatusCode)
 		}
 	}
 }
