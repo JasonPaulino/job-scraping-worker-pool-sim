@@ -17,7 +17,7 @@ type Job struct {
 type Result struct {
 	JobID      string
 	StatusCode int
-	Err        error
+	Errors     []error
 }
 
 func worker(id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
@@ -26,8 +26,8 @@ func worker(id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGrou
 	defer wg.Done()
 
 	var (
-		finalResp   *http.Response
-		finalJobErr error
+		finalResp *http.Response
+		errors    []error
 	)
 
 	for job := range jobs {
@@ -45,7 +45,7 @@ func worker(id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGrou
 				NOTE: We could change the Result struct Err field
 				To a list of error so we capture every retry
 			*/
-			finalJobErr = err // Resetting to latest error
+			errors = append(errors, err) // Resetting to latest error
 
 			fmt.Printf("[Worker %s] Attempt %d failed for job %s: %v\n", id, attempt, job.ID, err)
 			time.Sleep(500 * time.Millisecond) // backoff before retry
@@ -57,13 +57,13 @@ func worker(id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGrou
 			results <- Result{
 				JobID:      job.ID,
 				StatusCode: finalResp.StatusCode,
-				Err:        nil,
+				Errors:     nil,
 			}
 		} else {
 			results <- Result{
 				JobID:      job.ID,
 				StatusCode: 0,
-				Err:        finalJobErr,
+				Errors:     errors,
 			}
 		}
 	}
@@ -103,11 +103,9 @@ func main() {
 	close(results)
 
 	// Collect the results
-	for i := 0; i < len(urls); i++ {
-		result := <-results
-
-		if result.Err != nil {
-			fmt.Printf("Job %s FAILED: %v\n", result.JobID, result.Err)
+	for result := range results {
+		if result.Errors != nil {
+			fmt.Printf("Job %s FAILED: %v\n", result.JobID, result.Errors)
 		} else {
 			fmt.Printf("Job %s SUCCESS: status code %d\n", result.JobID, result.StatusCode)
 		}
