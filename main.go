@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/google/uuid"
+	"sync"
 	"time"
 
 	"fmt"
@@ -19,8 +20,10 @@ type Result struct {
 	Err        error
 }
 
-func worker(id string, jobs <-chan Job, results chan<- Result) {
+func worker(id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
 	_ = id // id param isn't used so we satisfy compiler
+
+	defer wg.Done()
 
 	var (
 		finalResp   *http.Response
@@ -67,6 +70,8 @@ func worker(id string, jobs <-chan Job, results chan<- Result) {
 }
 
 func main() {
+	var wg sync.WaitGroup
+
 	urls := []string{
 		"https://google.com",
 		"https://github.com",
@@ -82,8 +87,8 @@ func main() {
 	// Start workers
 	for w := 1; w <= numOfWorkers; w++ {
 		workerUUID := uuid.New().String()
-
-		go worker(workerUUID, jobs, results)
+		wg.Add(1)
+		go worker(workerUUID, jobs, results, &wg)
 	}
 
 	// Send jobs to the job queue
@@ -92,6 +97,10 @@ func main() {
 
 		jobs <- Job{ID: jobUUID, URL: url}
 	}
+
+	close(jobs)
+	wg.Wait()
+	close(results)
 
 	// Collect the results
 	for i := 0; i < len(urls); i++ {
