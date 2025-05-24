@@ -1,13 +1,14 @@
 package job
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 )
 
-func Worker(id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
+func Worker(ctx context.Context, id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
 	_ = id // id param isn't used so we satisfy compiler
 
 	defer wg.Done()
@@ -21,21 +22,27 @@ func Worker(id string, jobs <-chan Job, results chan<- Result, wg *sync.WaitGrou
 		maxRetries := 3
 
 		for attempt := 1; attempt <= maxRetries; attempt++ {
-			resp, err := http.Get(job.URL)
+			select {
+			case <-ctx.Done(): // blocks until timeout or cancel
+				// Context canceled or timeout exceeded
+				errors = append(errors, ctx.Err())
+				fmt.Printf("[Worker %s] Job %s canceled due to: %v\n", id, job.ID, ctx.Err())
+				break // continues to next job. "return" if we want the worker to stop working fully
+			default:
+				// Normal retry attempt
+				req, _ := http.NewRequestWithContext(ctx, "GET", job.URL, nil)
+				resp, err := http.DefaultClient.Do(req)
 
-			if err == nil { // Response was successful
-				finalResp = resp
-				break
+				if err == nil { // Response was successful
+					finalResp = resp
+					break
+				}
+
+				errors = append(errors, err)
+
+				fmt.Printf("[Worker %s] Attempt %d failed for job %s: %v\n", id, attempt, job.ID, err)
+				time.Sleep(500 * time.Millisecond) // backoff before retry
 			}
-
-			/*
-				NOTE: We could change the Result struct Err field
-				To a list of error so we capture every retry
-			*/
-			errors = append(errors, err) // Resetting to latest error
-
-			fmt.Printf("[Worker %s] Attempt %d failed for job %s: %v\n", id, attempt, job.ID, err)
-			time.Sleep(500 * time.Millisecond) // backoff before retry
 		}
 
 		if finalResp != nil {
